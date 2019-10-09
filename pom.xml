@@ -11,13 +11,26 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <org.jooq.version>3.12.1</org.jooq.version>
-        <db.url>jdbc:h2:~/mcve</db.url>
-        <db.username>sa</db.username>
+
+<!-- PG, PG driver and Docker Maven plugin -->        
+<version.postgres-driver>42.2.6</version.postgres-driver>
+<version.dmp>0.31.0</version.dmp>
+<version.pg>11</version.pg>
+
+        <db.url>jdbc:postgresql://localhost:44444/postgres</db.url>
+        <db.username>postgres</db.username>
         <db.password></db.password>
+
     </properties>
 
     <dependencies>
-
+		
+		<dependency>
+			<groupId>org.postgresql</groupId>
+			<artifactId>postgresql</artifactId>
+			<version>${version.postgres-driver}</version>
+		</dependency>
+		
         <!-- Database access -->
         <dependency>
             <groupId>org.jooq</groupId>
@@ -58,13 +71,71 @@
                 </configuration>
             </plugin>
 
+<!-- Run integration test to have a chance to properly shutdown the Docker container. -->
+<plugin>
+	<artifactId>maven-failsafe-plugin</artifactId>
+	<version>3.0.0-M3</version>
+	<executions>
+		<execution>
+			<goals>
+				<goal>integration-test</goal>
+				<goal>verify</goal>
+			</goals>
+		</execution>
+	</executions>
+</plugin>
+
+<!-- Run a PG Docker container for schema instantiation (via Flyway migration) and for jOOQ code generation.
+     The PG container will start at initialise and shutdown at post-integration-test phase. -->
+<plugin>
+	<groupId>io.fabric8</groupId>
+	<artifactId>docker-maven-plugin</artifactId>
+	<version>${version.dmp}</version>
+	<configuration>
+	<showLogs>true</showLogs>
+	<verbose>true</verbose>
+	<images>
+		<image>
+			<name>postgres:${version.pg}</name>
+			<run>
+				<user>${db.username}</user>
+				<env>
+					<POSTGRES_DB>postgres</POSTGRES_DB>
+					<POSTGRES_USER>${db.username}</POSTGRES_USER>
+					<POSTGRES_PASSWORD>${db.password}</POSTGRES_PASSWORD>
+				</env>
+				<ports><port>44444:5432</port></ports>
+				<wait><log>database system is ready to accept connections</log></wait>
+			</run>
+		</image>
+	</images>
+	</configuration>
+	<executions>
+		<execution>
+			<id>codegen-db-start</id>
+			<phase>initialize</phase>
+			<goals>
+				<goal>start</goal>
+			</goals>
+		</execution>
+		<execution>
+			<id>codegen-db-stop</id>
+			<phase>post-integration-test</phase>
+			<goals>
+				<goal>stop</goal>
+			</goals>
+		</execution>
+	</executions>
+</plugin>
+
+
             <plugin>
                 <groupId>org.flywaydb</groupId>
                 <artifactId>flyway-maven-plugin</artifactId>
-                <version>5.2.1</version>
+                <version>6.0.4</version>
                 <executions>
                     <execution>
-                        <phase>generate-sources</phase>
+                        <phase>initialize</phase>
                         <goals>
                             <goal>migrate</goal>
                         </goals>
@@ -74,6 +145,11 @@
                     <url>${db.url}</url>
                     <user>${db.username}</user>
                     <password>${db.password}</password>
+                    <group>true</group>
+                    <schemas>
+						<schema>mcve</schema>
+					</schemas>
+                    <!--initSql>SET SEARCH_PATH TO mcve</initSql-->
                     <locations>
                         <location>filesystem:src/main/resources/db/migration</location>
                     </locations>
@@ -95,6 +171,7 @@
 
                         <configuration>
                             <jdbc>
+								<driver>org.postgresql.Driver</driver>
                                 <url>${db.url}</url>
                                 <user>${db.username}</user>
                                 <password>${db.password}</password>
@@ -106,12 +183,13 @@
                                         <!-- PostgreSQL is lower case by default -->
                                         <schema>
                                             <inputSchema>mcve</inputSchema>
+                                            <outputSchemaToDefault>true</outputSchemaToDefault>
                                         </schema>
 
                                         <!-- H2 and others are upper case by default -->
-                                        <schema>
+                                        <!--schema>
                                             <inputSchema>MCVE</inputSchema>
-                                        </schema>
+                                        </schema-->
                                     </schemata>
                                 </database>
                                 <generate>
